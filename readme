@@ -1,9 +1,18 @@
-This is the IRremote library for the Arduino.
+This is a fork of the IRremote library for the Arduino.
 
 It has been gutted to significantly reduce code and data use on the
 ATtiny series of AVRs.
 
 To see the original, go to http://github.com/shirriff/Arduino-IRremote
+
+To install this, go to your Arduino libraries directory
+(/Users/<you>/Documents/Arduino/libraries on Windows,
+~/Documents/Arduino/libraries on OSX and probably other unices) and run:
+
+git clone https://github.com/nrw505/Arduino-TinyRemote.git TinyRemote
+
+The TinyRemote library should be available next time you start the
+Arduino IDE.
 
 Vast Majority Copyright 2009-2012 Ken Shirriff
 
