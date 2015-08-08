@@ -1,5 +1,5 @@
 /*
- * IRremote
+ * TinyRemote
  * Version 0.11 August, 2009
  * Copyright 2009 Ken Shirriff
  * For details, see http://arcfn.com/2009/08/multi-protocol-infrared-remote-library.html
@@ -15,10 +15,13 @@
  *
  * JVC and Panasonic protocol added by Kristian Lauszus (Thanks to zenwheel and other people at the original blog post)
  * LG added by Darryl Smith (based on the JVC protocol)
+ *
+ * Support for ATtiny added by Nigel Williams
+ *
  */
 
-#include "IRremote.h"
-#include "IRremoteInt.h"
+#include "TinyRemote.h"
+#include "TinyRemoteInt.h"
 
 // Provides ISR
 #include <avr/interrupt.h>
@@ -26,7 +29,7 @@
 volatile irparams_t irparams;
 
 // These versions of MATCH, MATCH_MARK, and MATCH_SPACE are only for debugging.
-// To use them, set DEBUG in IRremoteInt.h
+// To use them, set DEBUG in TinyRemoteInt.h
 // Normally macros are used for efficiency
 #ifdef DEBUG
 int MATCH(int measured, int desired) {
@@ -70,9 +73,11 @@ int MATCH_SPACE(int measured_ticks, int desired_us) {
 int MATCH(int measured, int desired) {return measured >= TICKS_LOW(desired) && measured <= TICKS_HIGH(desired);}
 int MATCH_MARK(int measured_ticks, int desired_us) {return MATCH(measured_ticks, (desired_us + MARK_EXCESS));}
 int MATCH_SPACE(int measured_ticks, int desired_us) {return MATCH(measured_ticks, (desired_us - MARK_EXCESS));}
-// Debugging versions are in IRremote.cpp
+// Debugging versions are in TinyRemote.cpp
 #endif
 
+#if TINY_IR_SEND
+#if TINY_PROTO_NEC
 void IRsend::sendNEC(unsigned long data, int nbits)
 {
   enableIROut(38);
@@ -92,7 +97,9 @@ void IRsend::sendNEC(unsigned long data, int nbits)
   mark(NEC_BIT_MARK);
   space(0);
 }
+#endif
 
+#if TINY_PROTO_SONY
 void IRsend::sendSony(unsigned long data, int nbits) {
   enableIROut(40);
   mark(SONY_HDR_MARK);
@@ -110,7 +117,9 @@ void IRsend::sendSony(unsigned long data, int nbits) {
     data <<= 1;
   }
 }
+#endif
 
+#if TINY_PROTO_RAW
 void IRsend::sendRaw(unsigned int buf[], int len, int hz)
 {
   enableIROut(hz);
@@ -124,7 +133,9 @@ void IRsend::sendRaw(unsigned int buf[], int len, int hz)
   }
   space(0); // Just to be sure
 }
+#endif
 
+#if TINY_PROTO_RC5
 // Note: first bit must be a one (start bit)
 void IRsend::sendRC5(unsigned long data, int nbits)
 {
@@ -146,7 +157,9 @@ void IRsend::sendRC5(unsigned long data, int nbits)
   }
   space(0); // Turn off at end
 }
+#endif
 
+#if TINY_PROTO_RC6
 // Caller needs to take care of flipping the toggle bit
 void IRsend::sendRC6(unsigned long data, int nbits)
 {
@@ -178,6 +191,9 @@ void IRsend::sendRC6(unsigned long data, int nbits)
   }
   space(0); // Turn off at end
 }
+#endif
+
+#if TINY_PROTO_PANASONIC
 void IRsend::sendPanasonic(unsigned int address, unsigned long data) {
     enableIROut(35);
     mark(PANASONIC_HDR_MARK);
@@ -227,7 +243,9 @@ void IRsend::sendJVC(unsigned long data, int nbits, int repeat)
     mark(JVC_BIT_MARK);
     space(0);
 }
+#endif
 
+#if TINY_PROTO_SAMSUNG
 void IRsend::sendSAMSUNG(unsigned long data, int nbits)
 {
   enableIROut(38);
@@ -247,6 +265,80 @@ void IRsend::sendSAMSUNG(unsigned long data, int nbits)
   mark(SAMSUNG_BIT_MARK);
   space(0);
 }
+#endif
+
+#if TINY_PROTO_SHARP
+/* Sharp and DISH support by Todd Treece ( http://unionbridge.org/design/ircommand )
+
+The Dish send function needs to be repeated 4 times, and the Sharp function
+has the necessary repeat built in because of the need to invert the signal.
+
+Sharp protocol documentation:
+http://www.sbprojects.com/knowledge/ir/sharp.htm
+
+Here are the LIRC files that I found that seem to match the remote codes
+from the oscilloscope:
+
+Sharp LCD TV:
+http://lirc.sourceforge.net/remotes/sharp/GA538WJSA
+
+DISH NETWORK (echostar 301):
+http://lirc.sourceforge.net/remotes/echostar/301_501_3100_5100_58xx_59xx
+
+For the DISH codes, only send the last for characters of the hex.
+i.e. use 0x1C10 instead of 0x0000000000001C10 which is listed in the
+linked LIRC file.
+*/
+
+void IRsend::sendSharpRaw(unsigned long data, int nbits) {
+  enableIROut(38);
+
+  // Sending codes in bursts of 3 (normal, inverted, normal) makes transmission
+  // much more reliable. That's the exact behaviour of CD-S6470 remote control.
+  for (int n = 0; n < 3; n++) {
+    for (int i = 1 << (nbits-1); i > 0; i>>=1) {
+      if (data & i) {
+        mark(SHARP_BIT_MARK);
+        space(SHARP_ONE_SPACE);
+      }
+      else {
+        mark(SHARP_BIT_MARK);
+        space(SHARP_ZERO_SPACE);
+      }
+    }
+    
+    mark(SHARP_BIT_MARK);
+    space(SHARP_ZERO_SPACE);
+    delay(40);
+
+    data = data ^ SHARP_TOGGLE_MASK;
+  }
+}
+
+// Sharp send compatible with data obtained through decodeSharp
+void IRsend::sendSharp(unsigned int address, unsigned int command) {
+  sendSharpRaw((address << 10) | (command << 2) | 2, 15);
+}
+#endif
+
+#if TINY_PROTO_DISH
+void IRsend::sendDISH(unsigned long data, int nbits) {
+  enableIROut(56);
+  mark(DISH_HDR_MARK);
+  space(DISH_HDR_SPACE);
+  for (int i = 0; i < nbits; i++) {
+    if (data & DISH_TOP_BIT) {
+      mark(DISH_BIT_MARK);
+      space(DISH_ONE_SPACE);
+    }
+    else {
+      mark(DISH_BIT_MARK);
+      space(DISH_ZERO_SPACE);
+    }
+    data <<= 1;
+  }
+}
+#endif
 
 void IRsend::mark(int time) {
   // Sends an IR mark for the specified number of microseconds.
@@ -289,7 +381,9 @@ void IRsend::enableIROut(int khz) {
   // The top value for the timer.  The modulation frequency will be SYSCLOCK / 2 / OCR2A.
   TIMER_CONFIG_KHZ(khz);
 }
+#endif
 
+#if TINY_IR_RECV
 IRrecv::IRrecv(int recvpin)
 {
   irparams.recvpin = recvpin;
@@ -418,77 +512,100 @@ int IRrecv::decode(decode_results *results) {
   if (irparams.rcvstate != STATE_STOP) {
     return ERR;
   }
+#if TINY_PROTO_NEC
 #ifdef DEBUG
   Serial.println("Attempting NEC decode");
 #endif
   if (decodeNEC(results)) {
     return DECODED;
   }
+#endif
+#if TINY_PROTO_SONY
 #ifdef DEBUG
   Serial.println("Attempting Sony decode");
 #endif
   if (decodeSony(results)) {
     return DECODED;
   }
+#endif
+#if TINY_PROTO_SANYO
 #ifdef DEBUG
   Serial.println("Attempting Sanyo decode");
 #endif
   if (decodeSanyo(results)) {
     return DECODED;
   }
+#endif
+#if TINY_PROTO_MITSUBISHI
 #ifdef DEBUG
   Serial.println("Attempting Mitsubishi decode");
 #endif
   if (decodeMitsubishi(results)) {
     return DECODED;
   }
+#endif
+#if TINY_PROTO_RC5
 #ifdef DEBUG
   Serial.println("Attempting RC5 decode");
 #endif  
   if (decodeRC5(results)) {
     return DECODED;
   }
+#endif
+#if TINY_PROTO_RC6
 #ifdef DEBUG
   Serial.println("Attempting RC6 decode");
 #endif 
   if (decodeRC6(results)) {
     return DECODED;
   }
+#endif
+#if TINY_PROTO_PANASONIC
 #ifdef DEBUG
     Serial.println("Attempting Panasonic decode");
 #endif 
     if (decodePanasonic(results)) {
         return DECODED;
     }
+#endif
+#if TINY_PROTO_LG
 #ifdef DEBUG
     Serial.println("Attempting LG decode");
 #endif 
     if (decodeLG(results)) {
         return DECODED;
     }
+#endif
+#if TINY_PROTO_JVC
 #ifdef DEBUG
     Serial.println("Attempting JVC decode");
 #endif 
     if (decodeJVC(results)) {
         return DECODED;
     }
+#endif
+#if TINY_PROTO_SAMSUNG
 #ifdef DEBUG
   Serial.println("Attempting SAMSUNG decode");
 #endif
   if (decodeSAMSUNG(results)) {
     return DECODED;
   }
+#endif
+#if TINY_PROTO_HASH
   // decodeHash returns a hash on any input.
   // Thus, it needs to be last in the list.
   // If you add any decodes, add them before this.
   if (decodeHash(results)) {
     return DECODED;
   }
+#endif
   // Throw away and start over
   resume();
   return ERR;
 }
 
+#if TINY_PROTO_NEC
 // NECs have a repeat only 4 items long
 long IRrecv::decodeNEC(decode_results *results) {
   long data = 0;
@@ -537,7 +654,9 @@ long IRrecv::decodeNEC(decode_results *results) {
   results->decode_type = NEC;
   return DECODED;
 }
+#endif
 
+#if TINY_PROTO_SONY
 long IRrecv::decodeSony(decode_results *results) {
   long data = 0;
   if (irparams.rawlen < 2 * SONY_BITS + 2) {
@@ -589,7 +708,9 @@ long IRrecv::decodeSony(decode_results *results) {
   results->decode_type = SONY;
   return DECODED;
 }
+#endif
 
+#if TINY_PROTO_SANYO
 // I think this is a Sanyo decoder - serial = SA 8650B
 // Looks like Sony except for timings, 48 chars of data and time/space different
 long IRrecv::decodeSanyo(decode_results *results) {
@@ -653,7 +774,9 @@ long IRrecv::decodeSanyo(decode_results *results) {
   results->decode_type = SANYO;
   return DECODED;
 }
+#endif
 
+#if TINY_PROTO_MITSUBISHI
 // Looks like Sony except for timings, 48 chars of data and time/space different
 long IRrecv::decodeMitsubishi(decode_results *results) {
   // Serial.print("?!? decoding Mitsubishi:");Serial.print(irparams.rawlen); Serial.print(" want "); Serial.println( 2 * MITSUBISHI_BITS + 2);
@@ -717,8 +840,9 @@ long IRrecv::decodeMitsubishi(decode_results *results) {
   results->decode_type = MITSUBISHI;
   return DECODED;
 }
+#endif
 
-
+#if TINY_PROTO_RC5 || TINY_PROTO_RC6
 // Gets one undecoded level at a time from the raw buffer.
 // The RC5/6 decoding is easier if the data is broken into time intervals.
 // E.g. if the buffer has MARK for 2 time intervals and SPACE for 1,
@@ -764,7 +888,9 @@ int IRrecv::getRClevel(decode_results *results, int *offset, int *used, int t1) 
 #endif
   return val;   
 }
+#endif
 
+#if TINY_PROTO_RC5
 long IRrecv::decodeRC5(decode_results *results) {
   if (irparams.rawlen < MIN_RC5_SAMPLES + 2) {
     return ERR;
@@ -799,7 +925,9 @@ long IRrecv::decodeRC5(decode_results *results) {
   results->decode_type = RC5;
   return DECODED;
 }
+#endif
 
+#if TINY_PROTO_RC6
 long IRrecv::decodeRC6(decode_results *results) {
   if (results->rawlen < MIN_RC6_SAMPLES) {
     return ERR;
@@ -850,6 +978,9 @@ long IRrecv::decodeRC6(decode_results *results) {
   results->decode_type = RC6;
   return DECODED;
 }
+#endif
+
+#if TINY_PROTO_PANASONIC
 long IRrecv::decodePanasonic(decode_results *results) {
     unsigned long long data = 0;
     int offset = 1;
@@ -883,7 +1014,9 @@ long IRrecv::decodePanasonic(decode_results *results) {
     results->bits = PANASONIC_BITS;
     return DECODED;
 }
+#endif
 
+#if TINY_PROTO_LG
 long IRrecv::decodeLG(decode_results *results) {
     long data = 0;
     int offset = 1; // Skip first space
@@ -927,8 +1060,9 @@ long IRrecv::decodeLG(decode_results *results) {
     results->decode_type = LG;
     return DECODED;
 }
+#endif
 
-
+#if TINY_PROTO_JVC
 long IRrecv::decodeJVC(decode_results *results) {
     long data = 0;
     int offset = 1; // Skip first space
@@ -980,7 +1114,9 @@ long IRrecv::decodeJVC(decode_results *results) {
     results->decode_type = JVC;
     return DECODED;
 }
+#endif
 
+#if TINY_PROTO_SAMSUNG
 // SAMSUNGs have a repeat only 4 items long
 long IRrecv::decodeSAMSUNG(decode_results *results) {
   long data = 0;
@@ -1029,7 +1165,9 @@ long IRrecv::decodeSAMSUNG(decode_results *results) {
   results->decode_type = SAMSUNG;
   return DECODED;
 }
+#endif
 
+#if TINY_PROTO_HASH
 /* -----------------------------------------------------------------------
  * hashdecode - decode an arbitrary IR code.
  * Instead of decoding using a standard encoding scheme
@@ -1083,72 +1221,5 @@ long IRrecv::decodeHash(decode_results *results) {
   results->decode_type = UNKNOWN;
   return DECODED;
 }
-
-/* Sharp and DISH support by Todd Treece ( http://unionbridge.org/design/ircommand )
-
-The Dish send function needs to be repeated 4 times, and the Sharp function
-has the necessary repeat built in because of the need to invert the signal.
-
-Sharp protocol documentation:
-http://www.sbprojects.com/knowledge/ir/sharp.htm
-
-Here are the LIRC files that I found that seem to match the remote codes
-from the oscilloscope:
-
-Sharp LCD TV:
-http://lirc.sourceforge.net/remotes/sharp/GA538WJSA
-
-DISH NETWORK (echostar 301):
-http://lirc.sourceforge.net/remotes/echostar/301_501_3100_5100_58xx_59xx
-
-For the DISH codes, only send the last for characters of the hex.
-i.e. use 0x1C10 instead of 0x0000000000001C10 which is listed in the
-linked LIRC file.
-*/
-
-void IRsend::sendSharpRaw(unsigned long data, int nbits) {
-  enableIROut(38);
-
-  // Sending codes in bursts of 3 (normal, inverted, normal) makes transmission
-  // much more reliable. That's the exact behaviour of CD-S6470 remote control.
-  for (int n = 0; n < 3; n++) {
-    for (int i = 1 << (nbits-1); i > 0; i>>=1) {
-      if (data & i) {
-        mark(SHARP_BIT_MARK);
-        space(SHARP_ONE_SPACE);
-      }
-      else {
-        mark(SHARP_BIT_MARK);
-        space(SHARP_ZERO_SPACE);
-      }
-    }
-    
-    mark(SHARP_BIT_MARK);
-    space(SHARP_ZERO_SPACE);
-    delay(40);
-
-    data = data ^ SHARP_TOGGLE_MASK;
-  }
-}
-
-// Sharp send compatible with data obtained through decodeSharp
-void IRsend::sendSharp(unsigned int address, unsigned int command) {
-  sendSharpRaw((address << 10) | (command << 2) | 2, 15);
-}
-
-void IRsend::sendDISH(unsigned long data, int nbits) {
-  enableIROut(56);
-  mark(DISH_HDR_MARK);
-  space(DISH_HDR_SPACE);
-  for (int i = 0; i < nbits; i++) {
-    if (data & DISH_TOP_BIT) {
-      mark(DISH_BIT_MARK);
-      space(DISH_ONE_SPACE);
-    }
-    else {
-      mark(DISH_BIT_MARK);
-      space(DISH_ZERO_SPACE);
-    }
-    data <<= 1;
-  }
-}
+#endif
+#endif

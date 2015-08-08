@@ -1,5 +1,5 @@
 /*
- * IRremote
+ * TinyRemote
  * Version 0.1 July, 2009
  * Copyright 2009 Ken Shirriff
  * For details, see http://arcfn.com/2009/08/multi-protocol-infrared-remote-library.html
@@ -13,8 +13,8 @@
  * JVC and Panasonic protocol added by Kristian Lauszus (Thanks to zenwheel and other people at the original blog post)
  */
 
-#ifndef IRremoteint_h
-#define IRremoteint_h
+#ifndef TinyRemoteint_h
+#define TinyRemoteint_h
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #include <Arduino.h>
@@ -26,7 +26,7 @@
 //
 // Uncomment the timer you wish to use on your board.  If you
 // are using another library which uses timer2, you have options
-// to switch IRremote to use a different timer.
+// to switch TinyRemote to use a different timer.
 
 // Arduino Mega
 #if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
@@ -64,6 +64,11 @@
 // Atmega8
 #elif defined(__AVR_ATmega8P__) || defined(__AVR_ATmega8__)
   #define IR_USE_TIMER1   // tx = pin 9
+
+#elif defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
+  #define IR_USE_TIMER1_TINY   // tx = pin 6
+//  #define IR_USE_TIMER0_TINY // tx = pin 6 (digital 1)
+
 
 // Arduino Duemilanove, Diecimila, LilyPad, Mini, Fio, etc
 #else
@@ -208,7 +213,7 @@ typedef struct {
 } 
 irparams_t;
 
-// Defined in IRremote.cpp
+// Defined in TinyRemote.cpp
 extern volatile irparams_t irparams;
 
 // IR detector output is active low
@@ -272,6 +277,80 @@ extern volatile irparams_t irparams;
 #define TIMER_PWM_PIN        3  /* Arduino Duemilanove, Diecimila, LilyPad, etc */
 #endif
 
+// defines for timer1 (8 bits, no phase-correct PWM - ATtiny)
+#elif defined(IR_USE_TIMER1_TINY)
+#define TIMER_RESET
+#define TIMER_ENABLE_PWM	(TCCR1 |= _BV(COM1A1) | _BV(COM1A0))
+#define TIMER_DISABLE_PWM	(TCCR1 &= ~(_BV(COM1A1) | _BV(COM1A0)))
+#define TIMER_ENABLE_INTR	(TIMSK |= _BV(OCIE1A))
+#define TIMER_DISABLE_INTR	(TIMSK &= ~(_BV(OCIE1A)))
+#define TIMER_INTR_NAME		TIMER1_COMPA_vect
+
+#define TIMER_CONFIG_KHZ(val) ({ \
+  TCCR1 = _BV(PWM1A) | _BV(CS10); \
+  OCR1A = SYSCLOCK / 2 / (val) ;				      \
+  OCR1C = SYSCLOCK / (val); \
+})
+#define TIMER_COUNT_TOP      (SYSCLOCK * USECPERTICK / 1000000)
+#if (TIMER_COUNT_TOP < 256)
+#define TIMER_CONFIG_NORMAL() ({ \
+  PLLCSR &= ~(_BV(PCKE)); \
+  TCCR1 = _BV(CTC1) | _BV(CS10) | _BV(COM1A0);	\
+  OCR1A = TIMER_COUNT_TOP; \
+  OCR1C = TIMER_COUNT_TOP; \
+  TCNT1 = 0; \
+})
+#else
+#define TIMER_CONFIG_NORMAL() ({ \
+  PLLCSR &= ~(_BV(PCKE)); \
+  TCCR1 = _BV(CTC1) | _BV(CS12) | _BV(COM1A0);	\
+  OCR1A = TIMER_COUNT_TOP / 8; \
+  OCR1C = TIMER_COUNT_TOP / 8; \
+  TCNT1 = 0; \
+})
+#endif
+#if defined(CORE_OC1A_PIN)
+#define TIMER_PWM_PIN        CORE_OC1A_PIN
+#else
+#define TIMER_PWM_PIN        1  /* ATtiny */
+#endif
+
+// defines for timer0 (8 bits)
+#elif defined(IR_USE_TIMER0_TINY)
+#define TIMER_RESET
+#define TIMER_ENABLE_PWM     (TCCR0A |= _BV(COM0B1))
+#define TIMER_DISABLE_PWM    (TCCR0A &= ~(_BV(COM0B1)))
+#define TIMER_ENABLE_INTR    (TIMSK |= _BV(OCIE0A))
+#define TIMER_DISABLE_INTR   (TIMSK &= ~(_BV(OCIE0A)))
+#define TIMER_INTR_NAME      TIMER0_COMPA_vect
+#define TIMER_CONFIG_KHZ(val) ({ \
+  const uint8_t pwmval = SYSCLOCK / 2000 / (val); \
+  TCCR0A = _BV(WGM00); \
+  TCCR0B = _BV(WGM02) | _BV(CS00); \
+  OCR0A = pwmval; \
+  OCR0B = pwmval / 3; \
+})
+#define TIMER_COUNT_TOP      (SYSCLOCK * USECPERTICK / 1000000)
+#if (TIMER_COUNT_TOP < 256)
+#define TIMER_CONFIG_NORMAL() ({ \
+  TCCR0A = _BV(WGM01); \
+  TCCR0B = _BV(CS00); \
+  OCR0A = TIMER_COUNT_TOP; \
+  TCNT0 = 0; \
+})
+#else
+#define TIMER_CONFIG_NORMAL() ({ \
+  TCCR0A = _BV(WGM01); \
+  TCCR0B = _BV(CS01); \
+  OCR0A = TIMER_COUNT_TOP / 8; \
+  TCNT0 = 0; \
+})
+#endif
+#if defined(CORE_OC0B_PIN)
+#define TIMER_PWM_PIN        CORE_OC0B_PIN
+#else
+#define TIMER_PWM_PIN        1
+#endif
 
 // defines for timer1 (16 bits)
 #elif defined(IR_USE_TIMER1)
